@@ -10,3 +10,11 @@ demo-state.json
 # online for make setup.
 # This file used to carry a lib/ line, which kept lib/ out of the repo and left students
 # with an empty directory.
+
+# Local Lab 2 deployment records and evidence
+LAB2-PLAN.md
+LAB2-PROGRESS.md
+LAB2-REPORT.md
+SEPOLIA-LINKS.md
+evidence/
+scripts/lab2-walkthrough.sh

@@ -220,3 +220,53 @@ What the zip must contain:
 
 The discussion prompts live in `STUDENT-QUESTIONS.md` — one per plank, no standard answers, and the
 real point of this lab.
+
+## Lab 2 architecture
+
+```mermaid
+flowchart LR
+    U["KYC-approved investor"]
+    R["(d) ComplianceRegistry<br/>admission: both endpoints"]
+    T["TBillToken<br/>18-decimal fund shares"]
+    V["TBillVault<br/>6-decimal USDC reserve buffer"]
+    F["(b) NAV attestation<br/>REPORTER_ROLE → 8-decimal feed"]
+    C["(a) Custodian / SPV<br/>off-chain T-Bills; reported holdings"]
+    Q["(c) RedemptionQueue<br/>FIFO escrow → settle → claim"]
+    U -->|"subscribe: USDC cash"| V
+    V -->|"mint shares at NAV"| T
+    T -->|"shares credited"| U
+    R -.->|"whitelist checks"| T
+    F -->|"subscription and payout pricing"| V
+    V -->|"invest: cash sent to custodian"| C
+    C -.->|"off-chain sale / bank settlement"| V
+    U -->|"approve + enqueue: escrow shares"| Q
+    V -->|"releaseReserves: USDC for settled tickets"| Q
+    Q -->|"burn escrowed shares"| T
+    Q -->|"claim: USDC cash"| U
+```
+
+The custody return arrow represents the real-world operational step. In this mock, `depositReserves` takes USDC from an approved operator; the custodian does not automatically sell securities or wire cash back. On-chain accounting therefore cannot prove the off-chain T-Bills exist.
+
+NAV converts shares to cash with `shares * nav / 1e20`, because `18 + 8 - 6 = 20`. Subscribing mints shares, enqueueing escrows them and locks the quoted payout, settlement burns them and reserves cash, and claiming pays the investor. A later NAV update does not change an existing ticket.
+
+The two queue invariants are `tBill.balanceOf(queue) == queue.pendingShares()` and `usdc.balanceOf(queue) >= queue.totalClaimable()`. They verify escrow and settled liabilities; they do not verify custody or the truth of the reported NAV.
+
+The provided `MockPriceFeed` is deliberately unsuitable for production: anyone can call `setPrice`, and `latestRoundData` returns the current timestamp instead of the last update time. The `REPORTER_ROLE` guard on `vault.attest` therefore does not protect direct writes to the mock feed.
+
+## Deployment (Sepolia)
+
+Deployment date: 2026-10-09 (Asia/Shanghai). Network: Ethereum Sepolia (chain ID `11155111`). All seven contracts were deployed and source-verified on Etherscan (`forge` exit 0). All 13 deployment and role-wiring transaction receipts have status `1`.
+
+| Contract | Sepolia address / Etherscan code |
+| --- | --- |
+| MockUSDC | [0x7b4898B74d300E0b923137f2e8A2535947FBf26A](https://sepolia.etherscan.io/address/0x7b4898B74d300E0b923137f2e8A2535947FBf26A#code) |
+| ComplianceRegistry | [0x90130D0653833110F07e2F205f3E03b9C37Ae17C](https://sepolia.etherscan.io/address/0x90130D0653833110F07e2F205f3E03b9C37Ae17C#code) |
+| MockPriceFeed | [0xd3AF4677c1EEa1A7e141F7b9fc963CAA860D8793](https://sepolia.etherscan.io/address/0xd3AF4677c1EEa1A7e141F7b9fc963CAA860D8793#code) |
+| TBillToken | [0xa2a2AC272bcB99bd28a7D39bB76F2e91abF0A459](https://sepolia.etherscan.io/address/0xa2a2AC272bcB99bd28a7D39bB76F2e91abF0A459#code) |
+| MockTBillCustodian | [0xb99cA039822Fc3F5fb7d0Ad6319F114D7C94656E](https://sepolia.etherscan.io/address/0xb99cA039822Fc3F5fb7d0Ad6319F114D7C94656E#code) |
+| TBillVault | [0x690Aec988c87A75bc276696BCB6D22DfB4a89A98](https://sepolia.etherscan.io/address/0x690Aec988c87A75bc276696BCB6D22DfB4a89A98#code) |
+| RedemptionQueue | [0xb54a65ee4cEB4D500DB0145e3738506a3B285574](https://sepolia.etherscan.io/address/0xb54a65ee4cEB4D500DB0145e3738506a3B285574#code) |
+
+The [TBillToken creation transaction](https://sepolia.etherscan.io/tx/0xe9027436ab519437a2f152d696d5bcd347a639179306fa80e495370ae35c2246) succeeded.
+
+The on-chain checks confirmed bytecode at all seven addresses, `vault.queue()` pointing to the queue, NAV `100000000` (1.00), vault and queue minter roles, the vault custodian role, and admin / queue whitelist membership. Rechecks passed: core **7**, exercises **20**, challenge **2**, with zero failures.
