@@ -10,17 +10,7 @@ import {TBillVault} from "../../src/TBillVault.sol";
 import {MockPriceFeed} from "../../src/exercises/MockPriceFeed.sol";
 import {MockTBillCustodian} from "../../src/exercises/MockTBillCustodian.sol";
 
-/// @title Ex2 + Ex3 + Ex4 — three planks of the bridge: custody (a), attestation (b), admission (d)
-/// @notice The bridge is how an off-chain asset becomes an on-chain token. Each exercise below
-///         pulls on one plank and shows you what is holding the span up — and what is not.
-///         The fourth plank, redemption (c), is the queue you write in Ex5.
-///
-///         Every `assertTrue(false, "TODO ...")` below is a placeholder. Write the real
-///         assertion, watch the test go green, and that exercise is done.
-///
-///         Acceptance: make exercise (it should be red until you are finished)
-///         Do not open test/TBill.t.sol — it contains the answers. Write yours first, and
-///         only look once you are stuck.
+/// @title Ex2-Ex4: custody, attestation, and admission tests
 contract BridgeTasksTest is Test {
     MockUSDC internal usdc;
     ComplianceRegistry internal compliance;
@@ -53,7 +43,6 @@ contract BridgeTasksTest is Test {
         compliance.setWhitelisted(bob, true);
     }
 
-    /// @dev Given: pay `assets` of USDC and receive shares at today's NAV
     function _subscribe(address user, uint256 assets) internal {
         usdc.faucet(user, assets);
         vm.startPrank(user);
@@ -62,15 +51,7 @@ contract BridgeTasksTest is Test {
         vm.stopPrank();
     }
 
-    // ==================================================================
-    // Ex2 · plank (a) custody — the shares exist, the box may not
-    // ==================================================================
-
-    /// @dev Subscribe 1000 USDC at par, then look at both sides of the bridge at once: the
-    ///      shares alice now holds, and what the custodian actually holds.
-    ///      Hint: _subscribe(alice, 1_000e6), then compare tBill.balanceOf(alice) with
-    ///      custodian.realHoldings(). One of them is 1000e18; the other is zero. Assert both,
-    ///      then ask yourself which contract ever talked to the custodian.
+    /// @dev Subscription cash stays in the vault; issuing shares does not buy T-Bills.
     function test_Ex2_SharesExistWhileTheCustodianHoldsNothing() public {
         _subscribe(alice, 1_000e6);
         assertEq(tBill.balanceOf(alice), 1_000e18);
@@ -78,11 +59,7 @@ contract BridgeTasksTest is Test {
         assertEq(vault.reserveBalance(), 1_000e6);
     }
 
-    /// @dev The custodian's `treasury` is a number a permissioned address can move. Prove that
-    ///      the "backing" is a typed-in integer, not cash that arrived.
-    ///      Hint: recordPurchase is onlyRole(CUSTODIAN_ROLE) and `admin` holds it. Call
-    ///      custodian.recordPurchase(1_000_000e6), then assert realHoldings() jumped while
-    ///      usdc.balanceOf(address(custodian)) is still zero.
+    /// @dev A purchase report changes reported holdings without moving cash.
     function test_Ex2_RealHoldingsIsJustANumber() public {
         assertEq(custodian.realHoldings(), 0);
         custodian.recordPurchase(1_000_000e6);
@@ -90,16 +67,7 @@ contract BridgeTasksTest is Test {
         assertEq(usdc.balanceOf(address(custodian)), 0);
     }
 
-    // ==================================================================
-    // Ex3 · plank (b) attestation — the chain's only window is one number
-    // ==================================================================
-
-    /// @dev Subscribe at par, then have the reporter move the NAV up. Assert the two things
-    ///      that make this an RWA and not a stablecoin: the share COUNT is unchanged, and the
-    ///      VALUE of the position moved. A stablecoin would have kept things 1:1.
-    ///      Hint: _subscribe(alice, 1_000e6); read tBill.balanceOf(alice) and
-    ///      vault.totalClaimValue(); then vault.attest(int256(NAV_1_25)); read both again.
-    ///      Shares stay 1000e18; the claim goes 1000e6 -> 1250e6.
+    /// @dev Updating NAV changes claim value without changing the share balance.
     function test_Ex3_TheClaimFloats_TheShareCountDoesNot() public {
         _subscribe(alice, 1_000e6);
         assertEq(tBill.balanceOf(alice), 1_000e18);
@@ -111,12 +79,7 @@ contract BridgeTasksTest is Test {
         assertEq(vault.totalClaimValue(), 1_250e6);
     }
 
-    /// @dev One number re-prices the entire book. Two holders, one call, and both claim values
-    ///      move together. attest is gated by REPORTER_ROLE — `admin` holds it — but nothing
-    ///      downstream can question the number it writes.
-    ///      Hint: _subscribe alice and bob, then vault.attest. A single holder's claim value is
-    ///      vault.assetsForShares(tBill.balanceOf(who)). Pick a moderate NAV (e.g. 50e8) so the
-    ///      totals stay small and readable.
+    /// @dev All holders use the same NAV report.
     function test_Ex3_OneCallMovesTheWholeBook() public {
         _subscribe(alice, 1_000e6);
         _subscribe(bob, 500e6);
@@ -130,15 +93,7 @@ contract BridgeTasksTest is Test {
         assertEq(vault.totalClaimValue(), 75_000e6);
     }
 
-    // ==================================================================
-    // Ex4 · plank (d) admission — where the guard is, and who holds the key
-    // ==================================================================
-
-    /// @dev An address that never passed KYC cannot receive shares, even by paying for them.
-    ///      Hint: faucet the attacker and approve the vault FIRST, or you revert for the wrong
-    ///      reason. Then vm.expectRevert + abi.encodeWithSelector to pin down
-    ///      TBillToken.NotWhitelisted(attacker). A vague "it reverted" stays green even after
-    ///      the guard is removed, so assert the exact selector.
+    /// @dev Fund and approve first so the revert tests admission, not insufficient cash.
     function test_Ex4_NoKyc_NoShares_EvenIfYouPay() public {
         usdc.faucet(attacker, 1_000e6);
         vm.startPrank(attacker);
@@ -151,10 +106,7 @@ contract BridgeTasksTest is Test {
         assertEq(vault.reserveBalance(), 0);
     }
 
-    /// @dev A whitelisted holder still cannot SEND shares to a non-whitelisted address —
-    ///      _update checks both endpoints, not just the sender.
-    ///      Hint: alice subscribes, then alice calls tBill.transfer(attacker, 1e18). Pin the
-    ///      revert on NotWhitelisted(attacker) — note WHICH address appears in the error.
+    /// @dev An approved sender cannot transfer shares to an unapproved receiver.
     function test_Ex4_TransferChecksBothEndpoints() public {
         _subscribe(alice, 1_000e6);
         vm.prank(alice);
@@ -164,13 +116,7 @@ contract BridgeTasksTest is Test {
         assertEq(tBill.balanceOf(attacker), 0);
     }
 
-    /// @dev Removing an address from the list freezes that individual holder — and it is
-    ///      stronger than it looks. The same _update guard sits in front of burn(), so once
-    ///      alice is off the list the issuer cannot confiscate her shares either.
-    ///      Hint: alice subscribes; compliance.setWhitelisted(alice, false); assert alice's
-    ///      transfer reverts; then assert tBill.burn(alice, 1_000e18) called by admin ALSO
-    ///      reverts NotWhitelisted(alice). Do not reach for pause() — that is a global switch,
-    ///      a different question (STUDENT-QUESTIONS.md C2).
+    /// @dev Removing a holder from the whitelist also blocks burning their shares.
     function test_Ex4_FreezeBeatsConfiscation() public {
         _subscribe(alice, 1_000e6);
         compliance.setWhitelisted(alice, false);

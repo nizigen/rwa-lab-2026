@@ -16,11 +16,11 @@ What does it actually assert, and what does it no longer prove?
 
 > Your answer:
 
-For a simple position before any redemption tickets exist, the economically intended relation is `vault.reserveBalance() + custodian.realHoldings() == vault.totalClaimValue()`. Both sides are expressed in six-decimal USDC units; comparing the raw eighteen-decimal share supply directly with holdings would be meaningless. This is a reconciliation target, not an invariant implemented or guaranteed by these contracts. Immediately after subscribing at par, the vault holds the payment even though the custodian reports zero, so ignoring the cash buffer would incorrectly describe the whole fund as unbacked.
+Before anyone requests redemption, I would compare `vault.reserveBalance() + custodian.realHoldings()` with `vault.totalClaimValue()`. All three values use six-decimal USDC units. The raw share supply has eighteen decimals, so it cannot be compared directly with a USDC amount. After a subscription, the payment is still in the vault even if the custodian reports no T-Bills. That cash belongs in the comparison.
 
-Once redemptions exist, the reconciliation must include queue cash and settled liabilities. Unsettled shares are still in total supply, but their tickets promise the enqueue NAV. An illustrative solvency condition is `vault cash + reported holdings + queue cash >= value of non-escrowed shares + pendingAssets + totalClaimable`. This avoids counting escrowed shares twice and includes cash already reserved for claims.
+The queue makes the calculation harder. Escrowed shares are still in total supply, but their tickets already have a fixed payout. A fuller check would compare vault cash, reported holdings, and queue cash against the value of shares outside escrow, `pendingAssets`, and `totalClaimable`. This avoids counting the same redemption twice. It is a proposed accounting check, not a rule that these contracts enforce.
 
-Even a matching equation proves only consistency between on-chain balances and reported numbers. `recordPurchase()` can increase the custodian's integer without receiving cash or buying a security. It does not prove ownership, correct valuation, freedom from liens, or recoverability in insolvency. Those require independent custody records, reconciliations, and enforceable legal rights. Neither queue invariant supplies that missing evidence.
+Even if the numbers match, I would only conclude that the records agree. `recordPurchase()` changes a number without transferring cash or buying a T-Bill. The equation cannot prove that securities exist, belong to the fund, or can be recovered. Those questions need custody statements and legal documents. The queue tests only check share and cash accounting.
 
 **A2.** The T-Bills are held by an SPV, a legal entity set up so the fund's assets are bankruptcy-
 remote from the issuer. Explain in your own words why a *legal* structure is part of a *technical*
@@ -28,11 +28,11 @@ design. If the SPV's custodian goes bankrupt, what does the on-chain token entit
 
 > Your answer:
 
-The legal structure determines what the token actually represents when ordinary operations stop. The contract can record balances and authorize redemption, but it cannot make Treasury securities belong to investors, exclude them from an issuer's bankruptcy estate, or order a bank to return assets. An SPV connects the software's share ledger to a defined pool of assets and a documented set of investor rights. Asset segregation, custody agreements, and the fund's governing documents therefore affect the technical assumptions about backing and settlement.
+The token needs a legal structure because the contract cannot control a bank account or a Treasury security. It can record who holds shares and who has requested payment. An SPV and its agreements explain which assets those shares represent and who owns them. Without that link, a correct token balance could still leave its holder with no clear claim to the assets.
 
-Bankruptcy remoteness reduces exposure to the issuer's creditors; it does not guarantee that every custodian failure produces an immediate, full recovery. If the custodian fails, the holder's entitlement depends on the actual legal arrangement. Properly segregated securities may be recoverable for the SPV and its investors, while an unsecured cash deposit or missing assets may lead to delays, competing claims, or losses. Owning an ERC-20 alone does not establish a direct claim against the custodian.
+Keeping assets separate from the issuer can reduce the risk that the issuer's creditors take them. It does not mean every custodian failure ends with a full refund. If securities are properly segregated, the SPV may be able to recover them. Cash deposits, missing assets, or a dispute over ownership may cause losses or a long delay. The token holder's rights depend on the fund and custody documents; holding an ERC-20 does not automatically give a direct claim against the custodian.
 
-I would require the documents to identify the legal issuer, asset owner, holder rights, insolvency procedures, and the administrator authorized to reconcile the token ledger with beneficial ownership. In this lab, `MockTBillCustodian.realHoldings()` demonstrates the trust boundary. It creates no SPV, custody account, or enforceable entitlement. The code simulates the accounting interface; the legal agreement must supply the asset claim.
+I would check who the issuer and asset owner are, what rights investors have, and what happens in bankruptcy. The lab only models the reporting interface. `realHoldings()` does not create an SPV, a custody account, or a legal right to Treasury securities.
 
 ---
 
@@ -45,11 +45,11 @@ financial, or legal) that mitigates each.
 
 > Your answer:
 
-A single reporter can fail through compromise, dishonesty, error, or unavailability. A stolen signing key permits unauthorized NAV updates; independent signing hardware and a threshold of separately controlled approvers reduce that risk. A dishonest reporter can deliberately inflate redemption payouts or underprice subscriptions; independent fund administration, custody reconciliation, and liability for false statements make that harder. A decimal or valuation mistake can misprice every account at once; explicit units, independent calculations, and deviation limits with reviewed overrides mitigate mistakes. An unavailable reporter can leave an otherwise honest NAV stale; monitoring, backup reporters, and a maximum permitted age should stop pricing-sensitive operations until fresh data arrives.
+A reporter's key can be stolen. Separate signing devices and approval from more than one independent signer would make a single stolen key less useful. A reporter can also lie about NAV. Comparing reports with independent custody records and a fund administrator's valuation would help detect that. Mistakes are another risk: a wrong decimal scale can change every holder's claim at once. Unit checks and limits on unusual price changes could catch some errors before they reach the feed.
 
-There is also a concrete backdoor in this repository. `TBillVault.attest()` checks `REPORTER_ROLE`, but `MockPriceFeed.setPrice()` is public and has no access control. Anyone can bypass the vault and change its feed directly. A production feed must authenticate its writers or verify signed reports; securing only the wrapper is insufficient.
+If the reporter stops working, the old price remains. A backup reporter and an age limit would help, with new pricing stopped until a fresh report is available. Multiple signers still need separate sources; agreeing on the same bad input does not make it correct.
 
-The reported NAV determines subscription shares and locked redemption amounts, but the two queue invariants verify escrow and settled cash accounting. They can both pass while the NAV is false and honest holders lose value. Consequently, multiple signatures alone are insufficient if all signers rely on the same false source. Independent evidence of custody and valuation is the necessary second check.
+There is a more basic issue in this lab. `attest()` requires `REPORTER_ROLE`, but anyone can call `MockPriceFeed.setPrice()` directly. A real feed would need restricted writers or checked signatures too. The two queue invariants do not validate NAV. They check that pending shares stay in escrow and settled claims have enough cash. Both can pass while a false price harms other holders.
 
 **B2.** A production feed would check whether `updatedAt` is stale; this lab's mock does not. A
 **frozen** NAV is a different attack from a **wrong** NAV. Describe how a stale-but-honest NAV can
@@ -57,11 +57,11 @@ be exploited by someone who knows the true value has moved.
 
 > Your answer:
 
-An honest NAV can become unfair simply by remaining unchanged after the underlying assets move. Suppose the feed still says one dollar per share, while the real fund value has increased to $1.10. An informed customer can subscribe at the old price and receive more shares than the payment should buy. Once the feed catches up, those shares claim part of the gain that economically belonged to existing investors. If the real value instead falls to $0.90 while the feed remains at one dollar, an informed existing holder can enqueue redemption at the overstated price. The queue locks that payout, so a subsequent truthful update does not correct the ticket. Remaining holders bear the resulting shortfall.
+Suppose the feed still shows one dollar per share, but the fund is now worth $1.10 per share. Someone who knows the new value can subscribe at the old price and receive too many shares. When NAV is updated, the new shares get part of the gain that belonged to earlier holders. The reporter does not need to lie for this to happen.
 
-The attacker need not control the reporter or submit a false number. The advantage comes from knowing current information while the contract prices transactions using old information. T+1 settlement makes the timing particularly relevant because a locked obligation survives the reporting delay.
+The reverse works for redemption. If the true value falls to $0.90 but the feed still says one dollar, a holder can enqueue at the old price. The ticket locks its payout when it is created. Updating NAV later does not reduce that payout, so the remaining fund bears the extra cost. A settlement delay gives the stale price more time to be used.
 
-This mock cannot meaningfully detect staleness. `latestRoundData()` returns `block.timestamp` as `updatedAt` on every read, even if `answer` has not changed for months. Adding only a reader-side age check would therefore always treat it as fresh. A real implementation needs a stored report timestamp updated when a report is accepted, authenticated round data, and explicit behavior for stale reports, such as suspending new subscriptions and redemption pricing while allowing already funded claims.
+This mock has a misleading timestamp. `latestRoundData()` returns the current `block.timestamp` every time it is read, even when the price has not changed. An age check on that value would always pass. A real feed needs to store when the report was accepted. I would stop new subscriptions and redemption pricing when that report is stale, while allowing claims that already have cash set aside.
 
 ---
 
@@ -73,13 +73,11 @@ the right allocation of risk, and how would you change it?
 
 > Your answer:
 
-Enqueueing exchanges an exposed share position for a fixed cash promise. If a customer escrows 100 shares at a one-dollar NAV, the ticket locks 100 USDC. If NAV reaches $1.10 before settlement, the payout stays 100 USDC rather than becoming 110. The redeemer gives up the intervening upside, while the fund retains the residual economic gain for the continuing investors, assuming assets are properly valued and fund accounting allocates that residual to them. Conversely, a fall after enqueue leaves the redeemer protected by the locked promise and shifts the loss toward the remaining fund.
+A redemption ticket fixes the amount at enqueue time. If I enqueue 100 shares when NAV is one dollar, the ticket promises 100 USDC. A rise to $1.10 before settlement does not turn that into 110 USDC. The redeemer gives up the gain during the wait. Continuing holders can benefit from it if the fund's accounting correctly assigns the remaining value to them. If NAV falls instead, the fixed payout protects the redeemer and leaves more of the loss with those who stay.
 
-This allocation can be reasonable if the disclosed dealing policy establishes enqueue as the valuation cutoff. It is problematic when the enqueue NAV is stale or when customers can choose the cutoff after observing information the reporter has not published. In this mock, updating NAV does not automatically distribute residual gains or recompute a fair NAV from assets; that economic interpretation requires accounting outside the contract.
+I think this can be fair when the valuation cutoff is clear before investors trade. It is less fair if the price is stale and someone can choose to exit after learning about a fall. The lab does not calculate NAV from real assets or automatically assign these gains. That part depends on the fund's accounting.
 
-I would use a disclosed dealing window and an independently determined NAV at its cutoff, with appropriate transaction-cost allocation. Pricing at settlement is another possible design, but the ticket must then explicitly promise variable proceeds rather than a fixed amount.
-
-`vault.reserveBalance() >= queue.pendingAssets()` is not a valid general invariant. Cash may already be invested in T-Bills, and increased value can remain at the custodian until sale and payment. Economic backing and immediately available settlement cash are different quantities.
+I would use a stated dealing window and an independent valuation at its cutoff. Pricing at settlement is possible too, but then the promised payout must be variable. I would not require vault cash to cover every pending request at all times: some backing may still be in T-Bills that need to be sold.
 
 **C2.** In a 2008 money-market fund breaking the buck, and in USDC's 2023 depeg, redemptions were
 handled very differently. Compare the two. For a tokenized T-Bill fund, what does it mean to "close
@@ -90,13 +88,13 @@ what would you rather have?
 
 > Your answer:
 
-The Reserve Primary Fund reported a $0.97 NAV in September 2008 and delayed redemption proceeds. The SEC subsequently permitted suspension of redemptions and payments while liquidation could not proceed without impairing NAV. This combined asset losses with a liquidity crisis. [SEC staff FAQ](https://www.sec.gov/divisions/investment/guidance/reservefundmmffaq.htm)
+The Reserve Primary Fund reported a $0.97 NAV in September 2008 and delayed redemption payments. The SEC later allowed it to suspend redemptions and payments during liquidation. Asset losses and a shortage of cash both mattered. [SEC staff FAQ](https://www.sec.gov/divisions/investment/guidance/reservefundmmffaq.htm)
 
-USDC's March 2023 disruption involved access to $3.3 billion deposited at Silicon Valley Bank and interrupted banking operations. Circle maintained its one-dollar redemption commitment and announced access to the deposits following government action. It later reported substantially clearing its minting and redemption backlog by March 15. That was a restoration of dollar settlement, rather than a fund paying a reduced floating NAV. [Circle reserve update](https://www.circle.com/pressroom/3-3-billion-of-usdc-reserve-risk-removed-dollar-de-peg-closes), [Circle operations update](https://www.circle.com/blog/march-15-update-on-usdc-operations)
+USDC's March 2023 depeg involved $3.3 billion at Silicon Valley Bank and disrupted banking access. Circle kept its one-dollar redemption commitment. After government action restored access to the deposits, it reported clearing most of its minting and redemption backlog by March 15. [Circle reserve update](https://www.circle.com/pressroom/3-3-billion-of-usdc-reserve-risk-removed-dollar-de-peg-closes), [Circle operations update](https://www.circle.com/blog/march-15-update-on-usdc-operations)
 
-For a T-Bill fund, closing the redemption channel should mean a clearly announced restriction on new requests or settlement, with existing tickets, ordering, and funded entitlements preserved. Any haircut or alternative allocation needs an explicit legal process, not silent deletion or repricing of the queue.
+For a T-Bill fund, closing redemption should mean a stated limit on new requests or settlement. Existing tickets and their order should remain recorded. A haircut needs a disclosed legal process, rather than deleting requests or changing payouts without notice.
 
-The lab's `pause()` disables token balance changes. It blocks transfers, subscriptions that mint, enqueue transfers, and settlement burns, so it cannot selectively manage a cash shortage. Importantly, the implemented queue's `claim()` transfers USDC without changing tBILL balances, so already settled claims remain payable. I would prefer separate controls for subscriptions, new redemption requests, and unfunded settlement, while preserving funded withdrawals. Published triggers, independent authorization, review deadlines, and clear resumption criteria would limit discretionary suspension.
+The lab's pause blocks token transfers, minting, enqueue transfers, and settlement burns together. That is too broad for a cash shortage. Already settled `claim()` calls still work because they transfer USDC without changing tBILL balances. I would use separate controls for subscriptions, new requests, and settlement. Cash already reserved for claims should remain withdrawable, with clear conditions for reopening the other operations.
 
 ---
 
@@ -109,11 +107,11 @@ and who should be able to move it?
 
 > Your answer:
 
-A regulated fund should admit holders according to its disclosed investor eligibility, identity checks, and applicable restrictions. Payment alone should not override admission. Equally, a customer waiting for an ordinary KYC review should not be treated as if misconduct has been established. The line should be clear before subscription: what evidence is required, who reviews it, when approval expires, and how errors can be challenged. Sensitive identity documents should remain off-chain; the registry should expose only the authorization needed to enforce token ownership.
+A regulated fund should say who can hold its shares before taking a subscription. Paying USDC should not bypass those rules. A customer waiting for KYC approval also needs a clear explanation of the delay and a way to correct mistakes. Identity documents should stay off-chain. The contract only needs the approval status required to control share ownership.
 
-This lab puts the guard in `TBillToken._update()`, which checks both nonzero endpoints. A whitelisted sender cannot transfer to an unapproved receiver. Minting checks the recipient, and burning checks the holder whose balance decreases. Therefore, removing a holder affects their existing position, not merely future purchases. Queue escrow also requires the queue to be whitelisted. These consequences should be part of the policy rather than surprises discovered during redemption.
+In this lab, `_update()` checks both nonzero endpoints. An approved sender cannot send shares to an unapproved receiver. Minting checks the new holder, and burning checks the holder whose balance is reduced. Removing someone from the list therefore affects shares they already own, including their ability to redeem. The queue must also be whitelisted so it can receive escrowed shares.
 
-I would place routine registry decisions with a dedicated compliance function under documented procedures, with independent approval for exceptional freezes. Administrators able to grant `COMPLIANCE_ROLE` also influence the boundary, so their keys need separate control and an audit trail. There should be clear explanations and an appeal route for administrative mistakes, while legally restricted cases follow the appropriate confidential process. Investor admission rules should not be casually changed by the trading desk or NAV reporter.
+I would give routine decisions to a compliance team using written rules. Exceptional freezes should need an independent review. The administrator who can grant `COMPLIANCE_ROLE` also has control over admission, so that key should have separate protection and an audit trail. Customers need an appeal route for ordinary errors. Any change to eligibility should follow the fund's stated policy, rather than a decision by the trading desk or the NAV reporter.
 
 **D2.** A regulated fund asks for two levers: freeze an address (`setWhitelisted(addr, false)`) and
 burn a balance (`MINTER_ROLE`) — both censorship tools, both justified by the product. But Ex4.3
@@ -123,11 +121,11 @@ an issuer these powers, then say what safeguards you would add and who should ho
 
 > Your answer:
 
-Issuer powers have a practical case: a regulated fund may need to restrict prohibited holders, comply with a valid court order, or restore ownership after a documented operational error. Without intervention, a token ledger could become inconsistent with the fund's legally recognized ownership. However, those same powers let a compromised or abusive issuer freeze legitimate investors, destroy their positions, or favor selected customers. A technically valid transaction is not evidence that its legal justification is valid. Concentrating compliance, minting, pausing, and administration in one key makes the consequences worse.
+There are reasons to let an issuer intervene. A fund may need to follow a court order, restrict a prohibited holder, or correct a proven ownership error. Those powers can keep the token record consistent with the fund's legal records. They can also be abused. A stolen key or a dishonest issuer could freeze a legitimate investor or destroy their shares. A successful transaction alone does not prove that the action was justified.
 
-Ex4.3 exposes an implementation conflict. Removing Alice from the whitelist prevents her transfers, but `burn(alice, amount)` also calls `_update()` and fails on the same sender check. `MINTER_ROLE` authorizes the entry point; it does not bypass the whitelist or global pause. Temporarily whitelisting a frozen holder to seize assets is an awkward workaround that also restores ordinary transfer permission.
+Ex4.3 shows a conflict between freezing and burning. Once Alice is removed from the whitelist, `_update()` rejects both her transfers and a burn of her balance. `MINTER_ROLE` allows the burn function to be called, but does not bypass the whitelist or pause. Temporarily approving Alice again would also restore her normal transfer permission.
 
-For a production design, I would specify a separate, narrowly scoped seizure or forced-transfer procedure with its own legal authorization, custody destination, reason record, and independent approvals. It should preserve economic ownership evidence instead of silently erasing it. Routine minting should belong to the subscription mechanism, compliance decisions to compliance officers, extraordinary seizure to a separate threshold committee, and role administration to independently governed multisignature control. Emergency freezes can be immediate, but should expire or receive timely review. Investors need disclosed powers, notices where permitted, audit records, and a process for correcting mistakes.
+I would give seizure a separate, limited procedure with a recorded reason, a defined destination, and independent approval. Compliance officers should handle admission, the subscription mechanism should mint, and a separate committee should approve exceptional seizures. Role changes should use a multisignature account. Emergency freezes need timely review. Investors should know these powers before joining and have a process for correcting mistakes.
 
 ---
 
@@ -151,8 +149,6 @@ say which plank it breaks:
 
 > Your answer:
 
-The most likely exploit in this exact deployment is direct manipulation of the publicly writable mock feed, breaking plank (b), attestation. A KYC-approved attacker can subscribe while NAV is one dollar, call `feed.setPrice(2e8)` without `REPORTER_ROLE`, and enqueue their shares at the doubled price. Resetting NAV afterward does not reduce `assetsLocked`. If an authorized settler processes the ticket and sufficient vault cash exists, the attacker claims the inflated payout. Settlement is still role-gated, so writing a false NAV alone does not grant immediate withdrawal authority; the loss materializes when the false ticket is funded.
+An approved attacker could subscribe at NAV one dollar, then call the public `feed.setPrice(2e8)` and enqueue at twice that price. This breaks plank (b), attestation. The attacker does not need `REPORTER_ROLE` to write to this mock feed. Changing NAV back does not change the ticket's `assetsLocked`.
 
-In a production fund with authenticated oracle writes, I would prioritize the related stale-NAV scenario: an informed customer exits at an old high price or subscribes at an old low price before a truthful update. Neither case necessarily breaks escrow conservation or settlement solvency. Shares can be correctly escrowed and cash correctly funded while the fund transfers value to the attacker.
-
-The mock should remain explicitly a teaching component. A real feed needs restricted writers or verified reports, a stored reporting timestamp, independent valuation reconciliation, and pricing cutoffs. Monitoring should compare NAV changes and ticket liabilities with verified assets, rather than assuming green accounting invariants establish fair prices.
+The attacker still needs an authorized settler to process the ticket and enough vault cash to fund it. If that happens, the inflated payout takes value from the other holders. The queue can keep correct escrow and cash balances throughout. I would test direct feed writes and check the resulting payout, rather than treating passing queue invariants as proof that NAV is fair.

@@ -11,21 +11,8 @@ import {MockPriceFeed} from "../../src/exercises/MockPriceFeed.sol";
 import {MockTBillCustodian} from "../../src/exercises/MockTBillCustodian.sol";
 import {RedemptionQueue} from "../../src/exercises/RedemptionQueue.sol";
 
-/// @title Ex6 — the two bridge invariants
-/// @notice Invariant testing flips the usual test around: let the machine call operations
-///         randomly and repeatedly, then ask "no matter how it thrashes, does this property
-///         still hold?" That is how a bridge should be tested — you will never guess the order
-///         an attacker does things in.
-///
-///         Acceptance: make exercise (it should be red until you are finished)
-///
-/// @dev Ex6 depends on Ex5: the handler below calls enqueue / settle / claim, which are the
-///      four functions you implement in RedemptionQueue.sol. Finish Ex5 first, or the fuzzer
-///      will only ever see reverts.
-///
-///      How it works: Foundry picks a function from the handler at random, picks random
-///      arguments, calls it, and repeats N times; after each round it runs every invariant_*
-///      function. The first failed assertion is a counterexample.
+/// @title Ex6: handler for randomized queue operations
+/// @notice Uses funded, approved users to exercise enqueue, settle, and claim.
 contract BridgeHandler is Test {
     MockUSDC internal usdc;
     TBillToken internal tBill;
@@ -34,7 +21,7 @@ contract BridgeHandler is Test {
 
     address[3] public users;
 
-    /// @dev Bookkeeping: proves the fuzzer really reached the handler instead of idling
+    /// @dev Counters verify that queue operations ran successfully.
     uint256 public ghost_enqueues;
     uint256 public ghost_settles;
     uint256 public ghost_claims;
@@ -53,7 +40,6 @@ contract BridgeHandler is Test {
         }
     }
 
-    /// @dev Given — pay USDC, receive shares at today's NAV
     function subscribe(uint256 userSeed, uint256 amount) external {
         address user = users[bound(userSeed, 0, users.length - 1)];
 
@@ -67,13 +53,12 @@ contract BridgeHandler is Test {
         vm.stopPrank();
     }
 
-    /// @dev Given — the reporter moves the NAV. Kept inside a sane band so the fuzzer spends
-    ///      its budget on the queue rather than on absurd prices.
+    /// @dev Keep NAV between $0.50 and $2 so runs exercise queue accounting.
     function attest(uint256 navSeed) external {
         vault.attest(int256(bound(navSeed, 0.5e8, 2e8)));
     }
 
-    /// @dev Given — the SPV wires cash back into the vault, the way T+1 proceeds would arrive
+    /// @dev Simulate sale proceeds arriving as cash in the vault.
     function fundVault(uint256 amount) external {
         uint256 balance = usdc.balanceOf(address(this));
         if (balance == 0) return;
@@ -83,13 +68,6 @@ contract BridgeHandler is Test {
         vault.depositReserves(amount);
     }
 
-    /// TODO Ex6.1 — implement enqueue
-    /// @dev Steps:
-    ///       1) pick one user at random (a user may hold 0 tBILL — if so, return early)
-    ///       2) bound the shares to [1, that user's tBILL balance]
-    ///       3) call queue.enqueue(shares) as that user
-    ///       4) do not forget the approval — enqueue pulls the shares in with transferFrom
-    ///      Hint: the two parameters have no names yet. Name them first.
     function enqueue(uint256 userSeed, uint256 shares) external {
         address user = users[bound(userSeed, 0, users.length - 1)];
         uint256 balance = tBill.balanceOf(user);
@@ -103,11 +81,7 @@ contract BridgeHandler is Test {
         ++ghost_enqueues;
     }
 
-    /// TODO Ex6.2 — implement settle
-    /// @dev Steps:
-    ///       1) bound `assets` to [1, vault.reserveBalance()] (return early if the vault is empty)
-    ///       2) call queue.settle(assets)
-    ///      Settling with less cash than the head ticket needs is legal — it simply pays nothing.
+    /// @dev A budget below the head ticket payout is valid and settles no tickets.
     function settle(uint256 assets) external {
         uint256 reserves = vault.reserveBalance();
         if (reserves == 0) return;
@@ -116,11 +90,6 @@ contract BridgeHandler is Test {
         if (filled > 0) ++ghost_settles;
     }
 
-    /// TODO Ex6.3 — implement claim
-    /// @dev Steps:
-    ///       1) pick one user at random
-    ///       2) if that user has nothing claimable, return early
-    ///       3) call queue.claim() as that user
     function claim(uint256 userSeed) external {
         address user = users[bound(userSeed, 0, users.length - 1)];
         if (queue.claimable(user) == 0) return;
@@ -182,23 +151,12 @@ contract InvariantTasksTest is Test {
         targetContract(address(handler));
     }
 
-    /// TODO Ex6.4 — escrow conservation (plank c)
-    /// @dev The queue holds exactly the shares it still owes a payout for. It never loses one
-    ///      and never invents one. The assertion below is wrong on purpose (it asserts a
-    ///      constant 1), which is why it goes red. Turn it into the property you want.
+    /// @dev Escrow must cover exactly the shares in unsettled tickets.
     function invariant_EscrowConservation() public view {
         assertEq(tBill.balanceOf(address(queue)), queue.pendingShares(), "escrow conservation");
     }
 
-    /// TODO Ex6.5 — settlement solvency (plank c)
-    /// @dev The queue never owes settled cash it does not hold: it pays at least what the
-    ///      claimable balances add up to. The assertion below is deliberately false.
-    ///
-    ///      Then ask yourself why nobody can write the more tempting invariant:
-    ///        vault.reserveBalance() >= queue.pendingAssets()
-    ///      Hint: when the NAV rises, where does the extra value physically sit? Is it in the
-    ///      vault's USDC buffer, or in the T-Bills at the custodian? That gap is the whole
-    ///      lesson of this lab — write your answer up as question C1.
+    /// @dev Every settled claim must have cash in the queue. Pending requests may await T-Bill sales.
     function invariant_SettlementSolvency() public view {
         assertGe(usdc.balanceOf(address(queue)), queue.totalClaimable(), "settlement solvency");
     }

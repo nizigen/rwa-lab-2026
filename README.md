@@ -130,7 +130,7 @@ The bridge has four planks. Each one is a contract or a role in this repo.
 | `src/TBillVault.sol` | **The on-ramp and the books.** `subscribe()` prices shares at the attested NAV; `attest()` is the reporter's only way to move it | (b) attestation |
 | `src/exercises/MockTBillCustodian.sol` | **The custodian / SPV.** Answers exactly one question: `realHoldings()` — how much is actually there? | (a) custody |
 | `src/exercises/MockPriceFeed.sol` | **The NAV oracle.** 8 decimals; `1.00e8` is par | (b) attestation |
-| `src/exercises/RedemptionQueue.sol` | **T+1.** Shares in, a queue ticket out, cash later — **your TODOs, Ex5** | (c) redemption |
+| `src/exercises/RedemptionQueue.sol` | **T+1.** Escrow shares, settle tickets in order, then claim cash | (c) redemption |
 
 ### The two invariants you will defend (Ex6)
 
@@ -158,9 +158,8 @@ queue is; the custodian must recognize the vault. Skip any one and the loop reve
 **not** require a testnet. The acceptance command for every exercise is `make exercise` — green when
 you are done.
 
-**Tier 2 (bonus)** — deploy to Sepolia and verify the source on Etherscan; put the three addresses
-and their Etherscan links in your `README.md`, under a `## Deployment (Sepolia)` heading. The
-commands are Lab 1's `README.md` §4, under "Tier 2 (bonus)" — the flow is identical.
+**Tier 2 (Assignment Three, 20%)** — deploy to Sepolia, verify all seven contracts on Etherscan,
+and list their addresses and links under `## Deployment (Sepolia)` in this README.
 
 **Tier 3 (challenge, optional)** — **Ex7**: `make challenge` (`test/challenges/FalseNav.t.sol`). The
 reporter's number is the chain's only window onto the asset; show what happens when it lies, and
@@ -197,11 +196,10 @@ To search for a fresh one, `rm -rf cache/invariant` first.
 
 ## 6. Submission
 
-Submission follows Lab 1: **one zip of the project** on Moodle, built from the project root.
+Assignment Three requires **one project ZIP** on Moodle, built from the project root.
 
 ```bash
-rm -f .env        # a private key anywhere in the zip scores zero
-zip -r submission.zip . -x '.git/*' 'out/*' 'cache/*' 'broadcast/*' '.env' '.DS_Store'
+zip -r submission.zip . -x '.git/*' 'out/*' 'cache/*' 'broadcast/*' '.env' '.DS_Store' '*.zip'
 ```
 
 **Keep `lib/` inside it** — those vendored dependencies are what let the grader run `make test`
@@ -213,6 +211,12 @@ What the zip must contain:
 2. Your answers to the discussion questions in `STUDENT-QUESTIONS.md`
 3. An architecture diagram in your `README.md` — a photo of a hand drawing is fine, but it must
    show the **four planks** and where cash and shares cross the bridge
+
+Screenshots are in `screenshoot/`: [Ex0](screenshoot/EX0-core-tests.png),
+[Ex2–Ex4](screenshoot/EX2-EX3-EX4-bridge-tests.png),
+[Ex5](screenshoot/EX5-redemption-queue-tests.png),
+[Ex6](screenshoot/EX6-invariant-tests.png), and [optional Ex7](screenshoot/EX7-false-NAV-challenge.png).
+These are the original captures. Keep personal keys and API credentials out of the ZIP.
 
 ---
 
@@ -245,17 +249,19 @@ flowchart LR
     Q -->|"claim: USDC cash"| U
 ```
 
-The custody return arrow represents the real-world operational step. In this mock, `depositReserves` takes USDC from an approved operator; the custodian does not automatically sell securities or wire cash back. On-chain accounting therefore cannot prove the off-chain T-Bills exist.
+The dotted return arrow is an off-chain sale and payment. In the mock, an operator calls `depositReserves` to add USDC; the custodian does not sell T-Bills or send cash back automatically.
 
-NAV converts shares to cash with `shares * nav / 1e20`, because `18 + 8 - 6 = 20`. Subscribing mints shares, enqueueing escrows them and locks the quoted payout, settlement burns them and reserves cash, and claiming pays the investor. A later NAV update does not change an existing ticket.
+Shares have 18 decimals, NAV has 8, and USDC has 6, so the conversion is `shares * nav / 1e20`. Subscription mints shares. Enqueue stores them and fixes the payout. Settlement burns them and sets cash aside; claim pays the investor. Later NAV changes do not change a ticket.
 
-The two queue invariants are `tBill.balanceOf(queue) == queue.pendingShares()` and `usdc.balanceOf(queue) >= queue.totalClaimable()`. They verify escrow and settled liabilities; they do not verify custody or the truth of the reported NAV.
+The queue tests check `tBill.balanceOf(queue) == queue.pendingShares()` and `usdc.balanceOf(queue) >= queue.totalClaimable()`. They check the queue's share and cash balances, but cannot prove the reported NAV or off-chain holdings are true.
 
-The provided `MockPriceFeed` is deliberately unsuitable for production: anyone can call `setPrice`, and `latestRoundData` returns the current timestamp instead of the last update time. The `REPORTER_ROLE` guard on `vault.attest` therefore does not protect direct writes to the mock feed.
+The mock feed is for the lab: anyone can call `setPrice`, and `latestRoundData` returns the current time instead of the last update time. Calling the feed directly bypasses the reporter check in `vault.attest`.
 
 ## Deployment (Sepolia)
 
-Deployment date: 2026-10-09 (Asia/Shanghai). Network: Ethereum Sepolia (chain ID `11155111`). All seven contracts were deployed and source-verified on Etherscan (`forge` exit 0). All 13 deployment and role-wiring transaction receipts have status `1`.
+Deployed on 2026-10-09 to Ethereum Sepolia (chain ID `11155111`). All seven contracts are source-verified on Etherscan. The 13 deployment and role-setting transactions succeeded.
+
+The [verified deployment source](https://github.com/nizigen/rwa-lab-2026/tree/f3f0063) is kept in Git history. Later contract edits only shorten comments; the executable code is unchanged.
 
 | Contract | Sepolia address / Etherscan code |
 | --- | --- |
@@ -269,4 +275,4 @@ Deployment date: 2026-10-09 (Asia/Shanghai). Network: Ethereum Sepolia (chain ID
 
 The [TBillToken creation transaction](https://sepolia.etherscan.io/tx/0xe9027436ab519437a2f152d696d5bcd347a639179306fa80e495370ae35c2246) succeeded.
 
-The on-chain checks confirmed bytecode at all seven addresses, `vault.queue()` pointing to the queue, NAV `100000000` (1.00), vault and queue minter roles, the vault custodian role, and admin / queue whitelist membership. Rechecks passed: core **7**, exercises **20**, challenge **2**, with zero failures.
+Deployment screenshots: [TBillToken](screenshoot/Tier2-TBillToken-verified.png), [TBillVault](screenshoot/Tier2-TBillVault-verified.png), and [RedemptionQueue](screenshoot/Tier2-RedemptionQueue-verified.png). The source tabs above show the verification status of all seven contracts.

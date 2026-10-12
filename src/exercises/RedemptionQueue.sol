@@ -9,17 +9,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {TBillToken} from "../TBillToken.sol";
 import {TBillVault} from "../TBillVault.sol";
 
-/// @title The redemption queue (Ex5) — four TODOs are waiting for you
-/// @notice This is plank (c) of the bridge, the physical side. Selling a T-Bill and wiring the
-///         cash takes a day (T+1 as it settles), so a redemption cannot be atomic. Instead the
-///         holder hands in their shares and gets a ticket; when the issuer's cash lands, the
-///         tickets are honoured strictly first-in-first-out. When cash is short, the queue
-///         backs up — and the people at the back are the ones who wait.
-///
-///         This is also where the decimals bite again. Three scales:
-///           shares    18 decimals  (tBILL)
-///           NAV        8 decimals  (per share)
-///           assets     6 decimals  (USDC)
+/// @title Ex5: FIFO redemption queue
+/// @notice Shares are escrowed at enqueue NAV. Settlement funds whole tickets in order.
 contract RedemptionQueue is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -32,7 +23,7 @@ contract RedemptionQueue is AccessControl, ReentrancyGuard {
     uint256 public constant NAV_PRECISION = 1e8;
     uint256 public constant SHARE_PRECISION = 1e18;
     uint256 public constant ASSET_PRECISION = 1e6;
-    /// @dev 18 + 8 - 6 — the same number as in the vault
+    /// @dev Divide by 10^(18 + 8 - 6) to express the payout in USDC units.
     uint256 public constant DECIMALS_SCALE = 1e20;
 
     struct Request {
@@ -44,7 +35,7 @@ contract RedemptionQueue is AccessControl, ReentrancyGuard {
 
     Request[] public requests;
 
-    /// @dev Index of the first request that has not been settled — the head of the queue
+    /// @dev Index of the first unsettled request.
     uint256 public head;
     /// @dev Shares held by this contract, backing the unsettled requests
     uint256 public pendingShares;
@@ -76,10 +67,6 @@ contract RedemptionQueue is AccessControl, ReentrancyGuard {
         _grantRole(SETTLER_ROLE, admin);
     }
 
-    // ==================================================================
-    // Given to you — read-only helpers, do not touch
-    // ==================================================================
-
     function queueLength() external view returns (uint256) {
         return requests.length;
     }
@@ -88,30 +75,13 @@ contract RedemptionQueue is AccessControl, ReentrancyGuard {
         return requests[id];
     }
 
-    // ==================================================================
-    // TODO Ex5.1 — the decimal conversion
-    // ==================================================================
-
-    /// @notice Value `shares` (18 decimals) in USDC smallest units (6 decimals), at an
-    ///         8-decimal NAV
-    /// @dev The product carries 18 + 8 = 26 decimals and you want 6 — divide by 10 to the what?
+    /// @notice Convert 18-decimal shares and 8-decimal NAV to 6-decimal USDC.
     function assetsAtNav(uint256 shares, uint256 nav) public pure returns (uint256) {
         return shares * nav / DECIMALS_SCALE;
     }
 
-    // ==================================================================
-    // TODO Ex5.2 — take the ticket
-    // ==================================================================
-
-    /// @notice Hand in `shares` and lock in a payout at today's NAV
-    /// @dev Steps:
-    ///        1) reject a zero amount
-    ///        2) pull the shares in — the caller must have approved this contract first
-    ///        3) read today's NAV and lock the payout with assetsAtNav
-    ///        4) record the ticket and return its id
-    ///        5) keep pendingShares and pendingAssets in step with what is outstanding
-    ///      Locking the rate now is the point: the payout must not drift with the NAV while
-    ///      the ticket waits in the queue.
+    /// @notice Escrow shares and lock the payout at the current NAV.
+    /// @dev Later NAV updates do not change this ticket.
     function enqueue(uint256 shares) external nonReentrant returns (uint256 id) {
         if (shares == 0) revert ZeroAmount();
         IERC20(address(tBill)).safeTransferFrom(msg.sender, address(this), shares);
@@ -123,22 +93,8 @@ contract RedemptionQueue is AccessControl, ReentrancyGuard {
         emit RedeemRequested(id, msg.sender, shares, assetsLocked);
     }
 
-    // ==================================================================
-    // TODO Ex5.3 — honour the queue, first in first out
-    // ==================================================================
-
-    /// @notice `assets` of cash has arrived from selling the underlying; pay out tickets
-    ///         strictly from the head, oldest first
-    /// @dev A ticket is honoured in full or not at all. If the remaining cash cannot cover
-    ///      the next ticket, stop and leave it for the next settlement — never pay a later
-    ///      ticket ahead of an earlier one.
-    ///      For each ticket you settle:
-    ///        - pull exactly that ticket's cash out of the vault
-    ///        - mark it settled and advance `head`
-    ///        - burn its escrowed shares
-    ///        - decrement pendingShares and pendingAssets
-    ///        - credit the owner's claimable balance and totalClaimable
-    ///      Return how much you actually paid out.
+    /// @notice Fund complete tickets in FIFO order, up to the cash budget.
+    /// @dev Stop if the head ticket cannot be funded; later requests cannot skip it.
     function settle(uint256 assets)
         external
         onlyRole(SETTLER_ROLE)
@@ -165,12 +121,8 @@ contract RedemptionQueue is AccessControl, ReentrancyGuard {
         }
     }
 
-    // ==================================================================
-    // TODO Ex5.4 — collect
-    // ==================================================================
-
-    /// @notice Withdraw the cash credited to you by settled tickets
-    /// @dev Checks-effects-interactions: zero the balance before the transfer.
+    /// @notice Withdraw cash from settled tickets.
+    /// @dev Clear the balance before transferring cash to prevent repeated claims.
     function claim() external nonReentrant returns (uint256 assets) {
         assets = claimable[msg.sender];
         if (assets == 0) revert NothingToClaim();
