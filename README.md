@@ -213,6 +213,7 @@ What the zip must contain:
    show the **four planks** and where cash and shares cross the bridge
 
 Screenshots are in `screenshoot/`: [Ex0](screenshoot/EX0-core-tests.png),
+[Ex0–Ex6 test results](screenshoot/EX0-EX6-tests-passed.png),
 [Ex2–Ex4](screenshoot/EX2-EX3-EX4-bridge-tests.png),
 [Ex5](screenshoot/EX5-redemption-queue-tests.png),
 [Ex6](screenshoot/EX6-invariant-tests.png), and [optional Ex7](screenshoot/EX7-false-NAV-challenge.png).
