@@ -228,27 +228,7 @@ real point of this lab.
 
 ## Lab 2 architecture
 
-```mermaid
-flowchart LR
-    U["KYC-approved investor"]
-    R["(d) ComplianceRegistry<br/>admission: both endpoints"]
-    T["TBillToken<br/>18-decimal fund shares"]
-    V["TBillVault<br/>6-decimal USDC reserve buffer"]
-    F["(b) NAV attestation<br/>REPORTER_ROLE → 8-decimal feed"]
-    C["(a) Custodian / SPV<br/>off-chain T-Bills; reported holdings"]
-    Q["(c) RedemptionQueue<br/>FIFO escrow → settle → claim"]
-    U -->|"subscribe: USDC cash"| V
-    V -->|"mint shares at NAV"| T
-    T -->|"shares credited"| U
-    R -.->|"whitelist checks"| T
-    F -->|"subscription and payout pricing"| V
-    V -->|"invest: cash sent to custodian"| C
-    C -.->|"off-chain sale / bank settlement"| V
-    U -->|"approve + enqueue: escrow shares"| Q
-    V -->|"releaseReserves: USDC for settled tickets"| Q
-    Q -->|"burn escrowed shares"| T
-    Q -->|"claim: USDC cash"| U
-```
+![Lab 2 hand-drawn architecture](screenshoot/Lab2-architecture-handdrawn.png)
 
 The dotted return arrow is an off-chain sale and payment. In the mock, an operator calls `depositReserves` to add USDC; the custodian does not sell T-Bills or send cash back automatically.
 
@@ -262,7 +242,7 @@ The mock feed is for the lab: anyone can call `setPrice`, and `latestRoundData` 
 
 Deployed on 2026-10-09 to Ethereum Sepolia (chain ID `11155111`). All seven contracts are source-verified on Etherscan. The 13 deployment and role-setting transactions succeeded.
 
-The [verified deployment source](https://github.com/nizigen/rwa-lab-2026/tree/f3f0063) is kept in Git history. Later contract edits only shorten comments; the executable code is unchanged.
+The [verified deployment source](https://github.com/nizigen/rwa-lab-2026/tree/f3f0063) is kept in Git history.
 
 | Contract | Sepolia address / Etherscan code |
 | --- | --- |
